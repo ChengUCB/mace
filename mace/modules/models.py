@@ -7,6 +7,7 @@
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 import os
+import logging
 import numpy as np
 import torch
 from e3nn import o3
@@ -199,6 +200,7 @@ class MACE(torch.nn.Module):
             from les import Les
             self.les = Les(les_arguments='les.yaml')
             self.use_les = True
+            logging.info("######### Using LES #########")
         else:
             self.use_les = False
             self.les = None
