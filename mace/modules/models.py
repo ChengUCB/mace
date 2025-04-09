@@ -201,9 +201,19 @@ class MACE(torch.nn.Module):
             self.les = Les(les_arguments='les.yaml')
             self.use_les = True
             logging.info("######### Using LES #########")
+
+            self.les_readout = NonLinearReadoutBlock(
+                 hidden_irreps_out,
+                 (len(heads) * MLP_irreps).simplify(),
+                 gate,
+                 o3.Irreps(f"{len(heads)}x0e"),
+                 len(heads),
+                 cueq_config,
+                 )
         else:
             self.use_les = False
             self.les = None
+            self.les_readout = None
 
     def forward(
         self,
@@ -313,18 +323,26 @@ class MACE(torch.nn.Module):
         node_energy_contributions = torch.stack(node_energies_list, dim=-1)
         node_energy = torch.sum(node_energy_contributions, dim=-1)  # [n_nodes, ]
 
-        les_result = self.les(desc=node_feats_out,
-            positions=data['positions'],
-            cell=data['cell'].view(-1, 3, 3),
-            batch=data["batch"],
-            compute_energy=True,
-            compute_bec=False,
-            bec_output_index=None,
-            )
+        if self.use_les:
+            les_q = self.les_readout(node_feats, node_heads)[
+                num_atoms_arange, node_heads
+            ]  # [n_nodes, len(heads)]
+            #print(les_q)
+            #print(node_feats_out.shape)
+            les_result = self.les(latent_charges=les_q, #node_feats_out,
+                positions=data['positions'],
+                cell=data['cell'].view(-1, 3, 3),
+                batch=data["batch"],
+                compute_energy=True,
+                compute_bec=False,
+                bec_output_index=None,
+                )
 
-        les_energy = les_result['E_lr']
-        #print(f"LES energy: {les_energy}")
-        total_energy = total_energy + les_energy
+            les_energy = les_result['E_lr']
+            #print(node_feats_out)
+            #print(self.les.atomwise.linear_nn.linear.bias)
+            #print(f"LES energy: {les_energy}")
+            total_energy = total_energy + les_energy
 
         # Outputs
         forces, virials, stress, hessian = get_outputs(
@@ -467,8 +485,17 @@ class ScaleShiftMACE(MACE):
         total_energy = e0 + inter_e
         node_energy = node_e0 + node_inter_es
 
+        #print(node_feats_out.shape)
         if self.use_les:
-            les_result = self.les(desc=node_feats_out,
+
+            les_q = self.les_readout(node_feats, node_heads)[
+                num_atoms_arange, node_heads
+            ]  # [n_nodes, len(heads)]
+            #print('les_q:', les_q)
+            #print('les_q shape:', les_q.shape)
+
+            les_result = self.les(
+                latent_charges=les_q,
                 positions=data['positions'],
                 cell=data['cell'].view(-1, 3, 3),
                 batch=data["batch"],
@@ -476,6 +503,9 @@ class ScaleShiftMACE(MACE):
                 compute_bec=False,
                 bec_output_index=None,
                 )
+            #print(self.les.atomwise.linear_nn.linear.bias)
+            #print(self.les.atomwise.linear_nn.test_bias)
+            #print(self.les.atomwise.linear_nn.linear.weight)
 
             les_energy = les_result['E_lr']
             #print(f"LES energy: {les_energy}")
