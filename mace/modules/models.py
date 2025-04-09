@@ -6,6 +6,7 @@
 
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
+import os
 import numpy as np
 import torch
 from e3nn import o3
@@ -14,6 +15,7 @@ from e3nn.util.jit import compile_mode
 from mace.data import AtomicData
 from mace.modules.radial import ZBLBasis
 from mace.tools.scatter import scatter_sum
+
 
 from .blocks import (
     AtomicEnergiesBlock,
@@ -192,6 +194,15 @@ class MACE(torch.nn.Module):
                     )
                 )
 
+        # check if a yaml file exists in the current folder, if so, active LES
+        if os.path.isfile('les.yaml'):
+            from les import Les
+            self.les = Les(les_arguments='les.yaml')
+            self.use_les = True
+        else:
+            self.use_les = False
+            self.les = None
+
     def forward(
         self,
         data: Dict[str, torch.Tensor],
@@ -299,6 +310,19 @@ class MACE(torch.nn.Module):
         total_energy = torch.sum(contributions, dim=-1)  # [n_graphs, ]
         node_energy_contributions = torch.stack(node_energies_list, dim=-1)
         node_energy = torch.sum(node_energy_contributions, dim=-1)  # [n_nodes, ]
+
+        les_result = self.les(desc=node_feats_out,
+            positions=data['positions'],
+            cell=data['cell'].view(-1, 3, 3),
+            batch=data["batch"],
+            compute_energy=True,
+            compute_bec=False,
+            bec_output_index=None,
+            )
+
+        les_energy = les_result['E_lr']
+        #print(f"LES energy: {les_energy}")
+        total_energy = total_energy + les_energy
 
         # Outputs
         forces, virials, stress, hessian = get_outputs(
@@ -440,6 +464,21 @@ class ScaleShiftMACE(MACE):
         # Add E_0 and (scaled) interaction energy
         total_energy = e0 + inter_e
         node_energy = node_e0 + node_inter_es
+
+        if self.use_les:
+            les_result = self.les(desc=node_feats_out,
+                positions=data['positions'],
+                cell=data['cell'].view(-1, 3, 3),
+                batch=data["batch"],
+                compute_energy=True,
+                compute_bec=False,
+                bec_output_index=None,
+                )
+
+            les_energy = les_result['E_lr']
+            #print(f"LES energy: {les_energy}")
+            total_energy = total_energy + les_energy
+
         forces, virials, stress, hessian = get_outputs(
             energy=inter_e,
             positions=data["positions"],
