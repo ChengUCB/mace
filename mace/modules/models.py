@@ -202,18 +202,43 @@ class MACE(torch.nn.Module):
             self.use_les = True
             logging.info("######### Using LES #########")
 
-            self.les_readout = NonLinearReadoutBlock(
-                 hidden_irreps_out,
-                 (len(heads) * MLP_irreps).simplify(),
-                 gate,
-                 o3.Irreps(f"{len(heads)}x0e"),
-                 len(heads),
-                 cueq_config,
-                 )
+            self.les_readouts = torch.nn.ModuleList()
+            self.les_readouts.append(
+                LinearReadoutBlock(
+                    hidden_irreps, o3.Irreps(f"{len(heads)}x0e"), cueq_config
+                )
+            )
+
+            for i in range(num_interactions - 1):
+                if i == num_interactions - 2:
+                    hidden_irreps_out = str(
+                        hidden_irreps[0]
+                    )  # Select only scalars for last layer
+                else:
+                    hidden_irreps_out = hidden_irreps
+
+                if i == num_interactions - 2:
+                    self.les_readouts.append(
+                        NonLinearReadoutBlock(
+                            hidden_irreps_out,
+                            (len(heads) * MLP_irreps).simplify(),
+                            gate,
+                            o3.Irreps(f"{len(heads)}x0e"),
+                            len(heads),
+                            cueq_config,
+                        )
+                    )
+                else:
+                    self.les_readouts.append(
+                        LinearReadoutBlock(
+                            hidden_irreps, o3.Irreps(f"{len(heads)}x0e"), cueq_config
+                        )
+                    )
+
         else:
             self.use_les = False
             self.les = None
-            self.les_readout = None
+            self.les_readouts = None
 
     def forward(
         self,
@@ -327,8 +352,6 @@ class MACE(torch.nn.Module):
             les_q = self.les_readout(node_feats, node_heads)[
                 num_atoms_arange, node_heads
             ]  # [n_nodes, len(heads)]
-            #print(les_q)
-            #print(node_feats_out.shape)
             les_result = self.les(latent_charges=les_q, #node_feats_out,
                 positions=data['positions'],
                 cell=data['cell'].view(-1, 3, 3),
@@ -339,9 +362,6 @@ class MACE(torch.nn.Module):
                 )
 
             les_energy = les_result['E_lr']
-            #print(node_feats_out)
-            #print(self.les.atomwise.linear_nn.linear.bias)
-            #print(f"LES energy: {les_energy}")
             total_energy = total_energy + les_energy
 
         # Outputs
@@ -382,6 +402,8 @@ class ScaleShiftMACE(MACE):
         self.scale_shift = ScaleShiftBlock(
             scale=atomic_inter_scale, shift=atomic_inter_shift
         )
+
+        logging.info('######### Using ScaleShift #########')
 
     def forward(
         self,
@@ -450,8 +472,10 @@ class ScaleShiftMACE(MACE):
         # Interactions
         node_es_list = [pair_node_energy]
         node_feats_list = []
-        for interaction, product, readout in zip(
-            self.interactions, self.products, self.readouts
+        node_q_list = []
+
+        for interaction, product, readout, les_readout in zip(
+            self.interactions, self.products, self.readouts, self.les_readouts
         ):
             node_feats, sc = interaction(
                 node_attrs=data["node_attrs"],
@@ -468,12 +492,22 @@ class ScaleShiftMACE(MACE):
                 readout(node_feats, node_heads)[num_atoms_arange, node_heads]
             )  # {[n_nodes, ], }
 
+            node_q_list.append(
+                les_readout(node_feats, node_heads)[num_atoms_arange, node_heads]
+            )  # {[n_nodes, ], }
+
         # Concatenate node features
         node_feats_out = torch.cat(node_feats_list, dim=-1)
         # Sum over interactions
         node_inter_es = torch.sum(
             torch.stack(node_es_list, dim=0), dim=0
         )  # [n_nodes, ]
+
+        # Sum over interactions
+        les_q = torch.sum(
+            torch.stack(node_q_list, dim=0), dim=0
+        )  # [n_nodes, ]
+
         node_inter_es = self.scale_shift(node_inter_es, node_heads)
 
         # Sum over nodes in graph
@@ -485,14 +519,8 @@ class ScaleShiftMACE(MACE):
         total_energy = e0 + inter_e
         node_energy = node_e0 + node_inter_es
 
-        #print(node_feats_out.shape)
+        # MARK
         if self.use_les:
-
-            les_q = self.les_readout(node_feats, node_heads)[
-                num_atoms_arange, node_heads
-            ]  # [n_nodes, len(heads)]
-            #print('les_q:', les_q)
-            #print('les_q shape:', les_q.shape)
 
             les_result = self.les(
                 latent_charges=les_q,
@@ -503,16 +531,12 @@ class ScaleShiftMACE(MACE):
                 compute_bec=False,
                 bec_output_index=None,
                 )
-            #print(self.les.atomwise.linear_nn.linear.bias)
-            #print(self.les.atomwise.linear_nn.test_bias)
-            #print(self.les.atomwise.linear_nn.linear.weight)
 
             les_energy = les_result['E_lr']
-            #print(f"LES energy: {les_energy}")
             total_energy = total_energy + les_energy
 
         forces, virials, stress, hessian = get_outputs(
-            energy=inter_e,
+            energy=total_energy,
             positions=data["positions"],
             displacement=displacement,
             cell=data["cell"],
@@ -522,6 +546,7 @@ class ScaleShiftMACE(MACE):
             compute_stress=compute_stress,
             compute_hessian=compute_hessian,
         )
+
         output = {
             "energy": total_energy,
             "node_energy": node_energy,
