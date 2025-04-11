@@ -70,7 +70,7 @@ def configure_model(
         )
 
     # Build model
-    if model_foundation is not None and args.model in ["MACE", "ScaleShiftMACE"]:
+    if model_foundation is not None and args.model in ["MACE", "ScaleShiftMACE", "MACELES"]:
         logging.info("Loading FOUNDATION model")
         model_config_foundation = extract_config_mace_model(model_foundation)
         model_config_foundation["atomic_energies"] = atomic_energies
