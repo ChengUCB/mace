@@ -239,6 +239,7 @@ class MACELES(ScaleShiftMACE):
         compute_atomic_stresses: bool = False,
         lammps_mliap: bool = False,
         compute_bec: bool = False,
+        compute_alpha_deriv: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         ctx = prepare_graph(
             data,
@@ -495,6 +496,7 @@ class MACELES(ScaleShiftMACE):
             compute_energy=True,
             compute_bec=(compute_bec or self.compute_bec),
             bec_output_index=self.bec_output_index,
+            compute_alpha_deriv=compute_alpha_deriv,
             e_ext=e_ext,
         )
         les_energy_opt = les_result["E_lr"]
@@ -548,6 +550,7 @@ class MACELES(ScaleShiftMACE):
             "latent_alphas": les_result["latent_alphas"],
             "latent_quads": les_quad,
             "BEC": les_result["BEC"],
+            "alpha_deriv": les_result.get("alpha_deriv"),
         }
 def _permute_to_e3nn_convention(x: torch.Tensor) -> torch.Tensor:
     return x[..., torch.LongTensor([1, 2, 0]).to(x.device)]

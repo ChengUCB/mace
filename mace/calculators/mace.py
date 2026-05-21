@@ -116,6 +116,7 @@ class MACECalculator(Calculator):
         pad_num_edges: int = 0,
         warmup: bool = False,
         compute_bec: bool = False,
+        compute_alpha_deriv: bool = False,
         external_field: Union[float, list, None] = None,
         eps_infty: float = None,
         electric_field_unit: float = 1.0,
@@ -124,6 +125,7 @@ class MACECalculator(Calculator):
     ):
         Calculator.__init__(self, **kwargs)
         self.compute_bec = compute_bec
+        self.compute_alpha_deriv = compute_alpha_deriv
         self.external_field = external_field
         self.eps_infty = eps_infty
         self.electric_field_unit = electric_field_unit
@@ -221,6 +223,8 @@ class MACECalculator(Calculator):
             )
         if getattr(self, "compute_bec", False):
             self.implemented_properties.append("bec")
+        if getattr(self, "compute_alpha_deriv", False):
+            self.implemented_properties.append("alpha_deriv")
 
         if model_paths is not None:
             if isinstance(model_paths, str):
@@ -659,6 +663,8 @@ class MACECalculator(Calculator):
             }
             if getattr(self, "compute_bec", False):
                 forward_kwargs["compute_bec"] = True
+            if getattr(self, "compute_alpha_deriv", False):
+                forward_kwargs["compute_alpha_deriv"] = True
 
             out = model(batch_dict, **forward_kwargs)
             if is_padded:
@@ -677,6 +683,8 @@ class MACECalculator(Calculator):
                 ret_tensors.setdefault("latent_kappas", []).append(out["latent_kappas"].detach())
             if getattr(self, "compute_bec", False) and out.get("BEC") is not None:
                 ret_tensors.setdefault("bec", []).append(out["BEC"].detach())
+            if getattr(self, "compute_alpha_deriv", False) and out.get("alpha_deriv") is not None:
+                ret_tensors.setdefault("alpha_deriv", []).append(out["alpha_deriv"].detach())
 
         # covert from ret_tensors to calculator results dict
         self.results = {}
@@ -767,6 +775,10 @@ class MACECalculator(Calculator):
         if getattr(self, "compute_bec", False) and "bec" in ret_tensors:
             self.results["bec"] = (
                 torch.mean(torch.stack(ret_tensors["bec"]), dim=0).cpu().numpy()
+            )
+        if getattr(self, "compute_alpha_deriv", False) and "alpha_deriv" in ret_tensors:
+            self.results["alpha_deriv"] = (
+                torch.mean(torch.stack(ret_tensors["alpha_deriv"]), dim=0).cpu().numpy()
             )
         if self.external_field is not None and getattr(self, "compute_bec", False) and "bec" in self.results:
             bec_output = self.results["bec"]  # [N_atoms, 2, 3, 3] or [N_atoms, 3, 3]
