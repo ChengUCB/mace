@@ -292,6 +292,7 @@ class MACELES(ScaleShiftMACE):
         compute_atomic_stresses: bool = False,
         lammps_mliap: bool = False,
         compute_bec: bool = False,
+        compute_alpha_deriv: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         ctx = prepare_graph(
             data,
@@ -591,6 +592,8 @@ class MACELES(ScaleShiftMACE):
             les_kappa = les_kappa**2
 
         les_positions = data["positions"] if displacement is not None else positions
+        # Only pass when requested: les versions without alpha_deriv reject the kwarg.
+        les_kwargs = {"compute_alpha_deriv": True} if compute_alpha_deriv else {}
         les_result = self.les(
             atomic_numbers=data["atomic_numbers"],
             latent_charges=les_q,
@@ -605,6 +608,7 @@ class MACELES(ScaleShiftMACE):
             compute_bec=(compute_bec or self.compute_bec),
             bec_output_index=self.bec_output_index,
             e_ext=e_ext,
+            **les_kwargs,
         )
         les_energy_opt = les_result["E_lr"]
         if les_energy_opt is None:
@@ -659,6 +663,7 @@ class MACELES(ScaleShiftMACE):
             "latent_alphas": les_result["latent_alphas"],
             "latent_quads": les_quad,
             "BEC": les_result["BEC"],
+            "alpha_deriv": les_result.get("alpha_deriv"),
         }
 
 

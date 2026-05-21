@@ -121,6 +121,7 @@ class MACECalculator(Calculator):
         pad_num_atoms: int = 0,
         pad_num_edges: int = 0,
         compute_bec: bool = False,
+        compute_alpha_deriv: bool = False,
         external_field: Union[list, None] = None,
         eps_infty: float = None,
         electric_field_unit: float = 1.0,
@@ -131,6 +132,7 @@ class MACECalculator(Calculator):
     ):
         Calculator.__init__(self, **kwargs)
         self.compute_bec = compute_bec
+        self.compute_alpha_deriv = compute_alpha_deriv
         self.compute_stress = compute_stress
         if not compute_stress and kwargs.get("compute_atomic_stresses", False):
             raise ValueError("compute_atomic_stresses requires compute_stress=True")
@@ -257,6 +259,8 @@ class MACECalculator(Calculator):
             )
         if getattr(self, "compute_bec", False):
             self.implemented_properties.append("bec")
+        if getattr(self, "compute_alpha_deriv", False):
+            self.implemented_properties.append("alpha_deriv")
 
         if model_paths is not None:
             if isinstance(model_paths, str):
@@ -511,6 +515,7 @@ class MACECalculator(Calculator):
             "latent_charges",
             "latent_dipoles",
             "latent_quads",
+            "alpha_deriv",
         }
         sliced: Dict[str, Union[torch.Tensor, None]] = {}
         for key, value in out.items():
@@ -562,7 +567,7 @@ class MACECalculator(Calculator):
                 dtype=out[key].dtype,
             )
 
-        for key in ("latent_alphas", "latent_kappas", "BEC"):
+        for key in ("latent_alphas", "latent_kappas", "BEC", "alpha_deriv"):
             if out.get(key) is not None:
                 dict_of_tensors[key] = torch.zeros(
                     num_models,
@@ -771,6 +776,8 @@ class MACECalculator(Calculator):
             }
             if getattr(self, "compute_bec", False):
                 model_kwargs["compute_bec"] = True
+            if getattr(self, "compute_alpha_deriv", False):
+                model_kwargs["compute_alpha_deriv"] = True
 
             # Scoped here too, not only around batch construction: extensions
             # create tensors mid-forward without a dtype (les does, for its
@@ -903,6 +910,10 @@ class MACECalculator(Calculator):
             )
         if getattr(self, "compute_bec", False) and "BEC" in ret_tensors:
             self.results["bec"] = torch.mean(ret_tensors["BEC"], dim=0).cpu().numpy()
+        if getattr(self, "compute_alpha_deriv", False) and "alpha_deriv" in ret_tensors:
+            self.results["alpha_deriv"] = (
+                torch.mean(ret_tensors["alpha_deriv"], dim=0).cpu().numpy()
+            )
         if (
             self.external_field is not None
             and getattr(self, "compute_bec", False)
